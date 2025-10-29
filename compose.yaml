@@ -1,0 +1,115 @@
+version: "3.8"
+
+services:
+  geth:
+    image: ethereum/client-go:v1.13.15
+    container_name: rin-geth
+    entrypoint: []
+    ports:
+      - "8545:8545"   # HTTP-RPC
+      - "8546:8546"   # WS-RPC
+      - "30303:30303" # P2P TCP
+      - "30303:30303/udp" # P2P UDP
+    volumes:
+      - ./geth/data:/data
+      - ./geth/genesis.json:/genesis.json:ro
+    environment:
+      - CHAIN_ID=${CHAIN_ID:-1337}
+      - CLIQUE_SIGNER_ADDRESS=${CLIQUE_SIGNER_ADDRESS}
+      - GETH_VERBOSITY=${GETH_VERBOSITY:-3}
+    # Init if not already initialized
+    # We run a tiny shell to initialize the datadir with genesis when empty
+    # then exec geth with the command above
+    # This keeps things idempotent across restarts
+    #
+    # Note: genesis.json must already have the correct extraData (signers)
+    command:
+      - /bin/sh
+      - -lc
+      - >-
+        test -d /data/geth || ( echo "Initializing genesis..."; geth --datadir /data init /genesis.json );
+
+        exec geth --datadir /data --syncmode full --networkid ${CHAIN_ID:-1337} --http --http.addr 0.0.0.0 --http.vhosts=* --http.api eth,net,web3,txpool,debug,personal --http.corsdomain=* --ws --ws.addr 0.0.0.0 --ws.origins=* --ws.api eth,net,web3,txpool,debug --ipcdisable --allow-insecure-unlock --unlock ${CLIQUE_SIGNER_ADDRESS} --password /data/password.txt --mine --miner.etherbase ${CLIQUE_SIGNER_ADDRESS} --nodiscover --verbosity ${GETH_VERBOSITY:-3}
+
+  postgres:
+    image: postgres:15
+    container_name: rin-postgres
+    environment:
+      - POSTGRES_DB=${PG_DB:-blockscout}
+      - POSTGRES_USER=${PG_USER:-blockscout}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-password}
+    volumes:
+      - ./blockscout/postgres:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  redis:
+    image: redis:7
+    container_name: rin-redis
+    ports:
+      - "6379:6379"
+
+  blockscout:
+    image: ghcr.io/blockscout/blockscout:latest
+    container_name: rin-blockscout
+    depends_on:
+      - postgres
+      - redis
+      - geth
+    environment:
+      - PORT=4000
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      - DATABASE_URL=postgresql://${PG_USER:-blockscout}:${PG_PASSWORD:-password}@postgres:5432/${PG_DB:-blockscout}?ssl=false
+      - POOL_SIZE=10
+      - REDIS_URL=redis://redis:6379
+      - ETHEREUM_JSONRPC_HTTP_URL=http://geth:8545
+      - ETHEREUM_JSONRPC_TRACE_URL=http://geth:8545
+      - ETHEREUM_JSONRPC_VARIANT=geth
+      - COIN=${COIN:-RIN}
+      - NETWORK=${NETWORK_NAME:-rinchain-dev}
+      - SUBNETWORK=${CHAIN_ID:-1337}
+      - CHAIN_ID=${CHAIN_ID:-1337}
+      - INDEXER_DISABLE_BLOCK_RETRY=true
+      - INDEXER_FETCHER_INTERNAL_TRANSACTIONS_BATCH_SIZE=50
+      - INDEXER_DISABLE_PENDING_TRANSACTIONS=true
+      - MICROSERVICE_SC_VERIFIER_ENABLED=false
+      - DISABLE_WEBAPP=false
+    command:
+      - /bin/sh
+      - -lc
+      - >-
+        /app/bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
+        /app/bin/blockscout start
+    # Healthcheck helps to wait before opening
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  frontend:
+    image: ghcr.io/blockscout/frontend:latest
+    container_name: rin-blockscout-frontend
+    depends_on:
+      - blockscout
+    environment:
+      - NEXT_PUBLIC_API_HOST=localhost:4000
+      - NEXT_PUBLIC_APP_HOST=localhost:4000
+      - NEXT_PUBLIC_NETWORK_NAME=${NETWORK_NAME:-rinchain-dev}
+      - NEXT_PUBLIC_NETWORK_ID=${CHAIN_ID:-1337}
+
+  nginx:
+    image: nginx:alpine
+    container_name: rin-blockscout-nginx
+    depends_on:
+      - frontend
+      - blockscout
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+
+volumes: {}
+
+
