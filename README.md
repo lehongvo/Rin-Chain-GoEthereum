@@ -1,65 +1,74 @@
-## RinChain: Private Go-Ethereum (Clique) + Blockscout
+## RinChain: Private Go‑Ethereum (Clique PoA) + Blockscout
 
-This repo runs a single-validator private chain (Clique PoA) with geth and a Blockscout explorer via Docker.
+One‑command private chain with geth (Clique) and Blockscout explorer using Docker Compose.
 
-### Prerequisites
-- Docker Desktop (or Docker Engine)
-- bash, sed
+### Requirements
+- Docker Desktop (Compose v2)
+- Bash
 
-### Quick Start
-1) Create a signer account (writes keystore into `geth/data` and `.env`):
-
+### First run
 ```bash
+# 1) Create signer (writes keystore to geth/data and updates .env)
 bash scripts/create_signer.sh
-```
 
-2) Build `geth/genesis.json` using the signer from `.env`:
-
-```bash
+# 2) Build genesis from template (injects signer and allocs)
 bash scripts/build_genesis.sh
+
+# 3) Start all services
+docker compose up -d
+
+# Explorer (self‑signed TLS via nginx)
+open https://localhost:4000   # accept the certificate
+
+# RPC
+# HTTP: http://localhost:8545
+# WS:   ws://localhost:8546
 ```
 
-3) Start the stack:
+### Prefunded accounts in genesis
+- Signer is pre‑funded by default.
+- This repo also funds `0x00000FC78106799b5b1dbD71f206d8f0218B28fe` with 100000 ETH.
+  To change or add more, edit `geth/genesis.template.json` under `alloc` and rerun `bash scripts/build_genesis.sh`.
 
+### Reset chain (apply new genesis/allocs)
 ```bash
-docker compose up -d --build
+docker compose down
+rm -rf geth/data/* blockscout/postgres/*
+bash scripts/build_genesis.sh
+docker compose up -d
 ```
 
-4) Open Blockscout at:
-- http://localhost:4000
-
-5) JSON-RPC (geth):
-- HTTP: http://localhost:8545
-- WS:   ws://localhost:8546
-
-### What gets created
-- `geth/data/` — geth datadir with keystore and chain data
-- `geth/genesis.json` — finalized genesis with your signer in Clique `extraData`
-- `.env` — contains `CHAIN_ID`, `CLIQUE_SIGNER_ADDRESS`, and defaults for Blockscout
-- `blockscout.env` — environment for Blockscout container
-
-### Customization
-- Change `CHAIN_ID` in `.env` before building `genesis.json`.
-- Prefund additional accounts by adding them under `alloc` in `geth/genesis.template.json` and re-running step 2.
-
-### Useful geth commands (inside the container)
-Attach console:
-
+### Extract signer private key (for local testing only!)
 ```bash
-docker exec -it rin-geth geth attach http://localhost:8545
+docker run --rm -v $(pwd)/geth/data:/data python:3.12 bash -lc "\
+  pip -q install eth-keyfile >/dev/null && python - <<'PY'\
+import json, glob\nfrom eth_keyfile import decode_keyfile_json\n\nwith open('/data/password.txt','rb') as f: pw=f.read().strip()\nwith open(sorted(glob.glob('/data/keystore/*'))[0]) as fh: k=json.load(fh)\nprint(decode_keyfile_json(k, pw).hex())\nPY"
 ```
 
-Send test tx via curl:
-
+### Useful RPC checks
 ```bash
-curl -H 'Content-Type: application/json' \
-  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  http://localhost:8545
+# current block number
+printf '%s' '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+ | curl -s -H 'Content-Type: application/json' --data @- http://localhost:8545
+
+# balance of funded address
+printf '%s' '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x00000FC78106799b5b1dbD71f206d8f0218B28fe","latest"],"id":2}' \
+ | curl -s -H 'Content-Type: application/json' --data @- http://localhost:8545
 ```
 
-### Notes
-- This setup runs a single miner with `--allow-insecure-unlock` for local development only. Do not use in production.
-- Blockscout indexing may take a minute after first launch.
+### Troubleshooting
+- Explorer shows “0 blocks” after reset: indexing needs ~1–2 minutes. Refresh after a bit.
+- Changed `alloc` but balances don’t show: reset both geth and Blockscout DB (see Reset section).
+- Geth fails “password/key not found”: recreate `geth/password.txt` and signer with `bash scripts/create_signer.sh`, rebuild genesis, restart geth.
+
+### Project layout
+- `compose.yaml` — services: geth, postgres, redis, blockscout, frontend, nginx
+- `geth/genesis.template.json` — template with placeholders; `scripts/build_genesis.sh` renders it
+- `geth/data/` — datadir (git‑ignored)
+- `nginx/` — HTTPS reverse proxy for Blockscout (self‑signed certs, git‑ignored)
+- `.gitignore` — ignores local data, secrets, and build artefacts
+
+This setup is for local development only (single validator, unlocked account, self‑signed TLS). Do not use in production.
 
 
 # Rin-Chain-GoEthereum
