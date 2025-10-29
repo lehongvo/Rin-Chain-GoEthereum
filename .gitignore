@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.envrc
+
+# Local environment/secrets
+.env
+blockscout.env
+
+# Docker/Compose runtime data
+geth/data/
+blockscout/postgres/
+
+# TLS certificates (self-signed for local dev)
+nginx/certs/
+
+# Logs & temp
+*.log
+logs/
+.tmp/
+
+# Editor/IDE
+.vscode/
+.idea/
