@@ -13,9 +13,10 @@ bash scripts/create_signer.sh
 
 # 2) Build genesis from template (injects signer and allocs)
 bash scripts/build_genesis.sh
+docker compose -f /Users/user/Desktop/RinChain/compose.yaml restart nginx
 
 # 3) Start all services
-docker compose up -d
+![1761790401041](image/README/1761790401041.png)
 
 # Explorer (self‑signed TLS via nginx)
 open https://localhost:4000   # accept the certificate
